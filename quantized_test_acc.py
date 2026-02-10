@@ -1,0 +1,4 @@
+BASE_MODEL_PATH = "Qwen/Qwen3-1.7B"
+QUANTIZED_MODEL_PATH = "Qwen/Qwen3-1.7B-FP8"
+
+

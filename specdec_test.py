@@ -10,8 +10,8 @@ All prompts use the Qwen3 chat template with **thinking mode enabled**
 before its answer.
 
 Two input-context regimes:
-  - Short context:  MMLU (cais/mmlu) — multiple-choice knowledge questions,
-                    naturally short prompts.
+  - Short context:  MT-Bench (HuggingFaceH4/mt_bench_prompts) — open-ended
+                    multi-turn questions (first turn only), naturally short.
   - Long context:   LongBench v2 (THUDM/LongBench-v2) — full document
                     contexts (no truncation), filtered to fit max_model_len.
 
@@ -69,7 +69,7 @@ ENABLE_THINKING = False
 # ---------------------------------------------------------------------------
 # Dataset identifiers
 # ---------------------------------------------------------------------------
-MMLU_DATASET = "cais/mmlu"              # short-context knowledge QA
+MT_BENCH_DATASET = "HuggingFaceH4/mt_bench_prompts"  # short-context open-ended QA
 LONGBENCH_DATASET = "THUDM/LongBench-v2"  # long-context document QA
 
 
@@ -77,9 +77,9 @@ LONGBENCH_DATASET = "THUDM/LongBench-v2"  # long-context document QA
 # Dataset loading
 # ---------------------------------------------------------------------------
 
-def load_mmlu() -> list[dict]:
-    """Load the MMLU dataset (all subjects, test split)."""
-    ds = load_dataset(MMLU_DATASET, "all", split="test")
+def load_mt_bench() -> list[dict]:
+    """Load the MT-Bench dataset (first-turn prompts)."""
+    ds = load_dataset(MT_BENCH_DATASET, split="train")
     return list(ds)
 
 
@@ -93,18 +93,9 @@ def load_longbench_v2() -> list[dict]:
 # Prompt formatting
 # ---------------------------------------------------------------------------
 
-def _format_mmlu_prompt(row: dict) -> str:
-    """Format an MMLU row as a multiple-choice QA prompt."""
-    choices = row["choices"]
-    labels = ["A", "B", "C", "D"]
-    choice_lines = "\n".join(f"{labels[i]}. {choices[i]}" for i in range(len(choices)))
-    subject = row["subject"].replace("_", " ")
-    return (
-        f"The following is a multiple choice question about {subject}.\n\n"
-        f"Question: {row['question']}\n"
-        f"{choice_lines}\n"
-        f"Answer:"
-    )
+def _format_mt_bench_prompt(row: dict) -> str:
+    """Format an MT-Bench row using only the first-turn question."""
+    return row["prompt"][0]
 
 
 def _format_longbench_prompt(row: dict) -> str:
@@ -145,8 +136,8 @@ def build_short_prompts(
     seed: int = 42,
 ) -> list[str]:
     """
-    Build `num_requests` short prompts from MMLU, formatted with the Qwen3
-    chat template and thinking mode enabled.
+    Build `num_requests` short prompts from MT-Bench (first turn),
+    formatted with the model's chat template.
     """
     rng = random.Random(seed)
     indices = list(range(len(dataset)))
@@ -155,7 +146,7 @@ def build_short_prompts(
     prompts = []
     for i in range(num_requests):
         row = dataset[indices[i % len(indices)]]
-        text = _format_mmlu_prompt(row)
+        text = _format_mt_bench_prompt(row)
         prompts.append(_apply_chat_template(tokenizer, text))
     return prompts
 
@@ -444,7 +435,7 @@ def plot_sweep(
         ax.legend()
         ax.grid(True, alpha=0.3)
 
-    _plot_panel(axes[0, 0], short_keys, "Short Context (MMLU)")
+    _plot_panel(axes[0, 0], short_keys, "Short Context (MT-Bench)")
     if has_long:
         _plot_panel(axes[0, 1], long_keys, "Long Context (LongBench v2)")
 
@@ -473,9 +464,9 @@ def run_benchmark(args):
     #     max_tokens=args.max_new_tokens
     # )
     # ----- Load datasets -----
-    print("Loading MMLU dataset (short prompts) …")
-    mmlu_data = load_mmlu()
-    print(f"  Loaded {len(mmlu_data)} rows from {MMLU_DATASET}")
+    print("Loading MT-Bench dataset (short prompts) …")
+    mt_bench_data = load_mt_bench()
+    print(f"  Loaded {len(mt_bench_data)} rows from {MT_BENCH_DATASET}")
 
     long_prompts = None
     if not args.skip_long_context:
@@ -488,9 +479,9 @@ def run_benchmark(args):
     sweep_max = max(SWEEP_BATCH_SIZES) if args.sweep else 0
     num_prompts = max(total_requests, sweep_max)
 
-    print("\nBuilding short prompts from MMLU …")
+    print("\nBuilding short prompts from MT-Bench …")
     short_prompts = build_short_prompts(
-        mmlu_data, tokenizer, num_prompts, seed=42,
+        mt_bench_data, tokenizer, num_prompts, seed=42,
     )
 
     if not args.skip_long_context:
@@ -506,7 +497,7 @@ def run_benchmark(args):
     actual_short_len = len(tokenizer.encode(short_prompts[0], add_special_tokens=False))
     print(f"\n{'='*70}")
     print(f"Thinking mode   : ENABLED (enable_thinking=True)")
-    print(f"Short prompts   : MMLU ({MMLU_DATASET}), ~{actual_short_len} tokens")
+    print(f"Short prompts   : MT-Bench ({MT_BENCH_DATASET}), ~{actual_short_len} tokens")
     if long_prompts is not None:
         actual_long_len = len(tokenizer.encode(long_prompts[0], add_special_tokens=False))
         print(f"Long prompts    : LongBench v2 ({LONGBENCH_DATASET}), "
@@ -562,7 +553,7 @@ def run_benchmark(args):
             enable_prefix_caching=False,
         )
 
-        print("\n>>> Short context sweep (MMLU) ...")
+        print("\n>>> Short context sweep (MT-Bench) ...")
         sweep_data["baseline_short"] = run_batch_sweep(
             llm_baseline, short_prompts, sampling_params,
             batch_sizes, "AR-short",
@@ -595,7 +586,7 @@ def run_benchmark(args):
             speculative_config=speculative_config,
         )
 
-        print("\n>>> Short context sweep (MMLU) ...")
+        print("\n>>> Short context sweep (MT-Bench) ...")
         sweep_data["specdec_short"] = run_batch_sweep(
             llm_spec, short_prompts, sampling_params,
             batch_sizes, "SD-short",
@@ -656,7 +647,7 @@ def run_benchmark(args):
         enable_prefix_caching=False,
     )
 
-    print("\n>>> Short context  (MMLU) ...")
+    print("\n>>> Short context  (MT-Bench) ...")
     res = measure_throughput(llm_baseline, short_prompts, sampling_params, batch_size=args.num_requests)
     results["baseline_short"] = res
     print(json.dumps(res, indent=2))
@@ -689,7 +680,7 @@ def run_benchmark(args):
         speculative_config=speculative_config,
     )
 
-    print("\n>>> Short context  (MMLU) ...")
+    print("\n>>> Short context  (MT-Bench) ...")
     res = measure_throughput(llm_spec, short_prompts, sampling_params, batch_size=args.num_requests)
     results["specdec_short"] = res
     print(json.dumps(res, indent=2))
@@ -710,7 +701,7 @@ def run_benchmark(args):
     print("=" * 70)
 
     summary_pairs = [
-        ("Short context  (MMLU)", ("baseline_short", "specdec_short")),
+        ("Short context  (MT-Bench)", ("baseline_short", "specdec_short")),
     ]
     if long_prompts is not None:
         summary_pairs.append(
@@ -752,7 +743,7 @@ def run_benchmark(args):
                     "target_model": TARGET_MODEL,
                     "draft_model": DRAFT_MODEL,
                     "thinking_mode": True,
-                    "short_prompt_dataset": MMLU_DATASET,
+                    "short_prompt_dataset": MT_BENCH_DATASET,
                     "long_prompt_dataset": LONGBENCH_DATASET,
                     "num_spec_tokens": args.num_spec_tokens,
                     "max_new_tokens": args.max_new_tokens,

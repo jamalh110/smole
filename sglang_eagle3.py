@@ -196,8 +196,7 @@ def create_engine(args, speculative: bool = False, max_running_requests: int | N
     if max_running_requests is not None:
         engine_kwargs["max_running_requests"] = max_running_requests
 
-    if args.attention_backend:
-        engine_kwargs["attention_backend"] = args.attention_backend
+    engine_kwargs["attention_backend"] = args.attention_backend or "triton"
 
     if speculative:
         engine_kwargs["speculative_algorithm"] = "EAGLE3"
